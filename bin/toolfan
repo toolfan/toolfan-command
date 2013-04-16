@@ -1,3 +1,64 @@
 #!/usr/bin/env ruby
 
 require File.expand_path('../../lib/toolfan_command', __FILE__)
+require 'thor'
+require 'curb'
+require 'json'
+
+class ToolfanCLI < Thor
+  include Thor::Actions
+
+  desc 'list [QUERY]', 'list'
+  def list query=nil
+    data = JSON.parse(Curl.get('https://bower.herokuapp.com/packages').body_str).sort{ |x, y| x['name'] <=> y['name'] }
+
+    unless query.nil?
+      query = Regexp.new(query, 'i')
+      data.select!{ |pack| query =~ pack['name'] }
+    end
+    data.each do |pack|
+      #p JSON.parse(Curl.get("https://bower.herokuapp.com/packages/#{pack['name']}").body_str)['url']
+      print(pack['name'] << "\n")
+    end
+
+    print set_color("#{data.length} packages found\n", :green)
+  end
+
+  desc 'install NAME', 'install NAME'
+  def install name
+    pack = Curl.get("https://bower.herokuapp.com/packages/#{name}").body_str
+    if pack.nil? || pack == ''
+      print set_color("#{name} not found\n", :red)
+    else
+      url = JSON.parse(pack)['url']
+      if url.include?('github.com')
+        url.gsub!('git://', 'https://raw.')
+      else
+        url.gsub!('git://', 'https://raw.github.com/')
+      end
+      url.gsub('.git', '') if url.end_with?('.git')
+      url << '/master/'
+      data = JSON.parse(Curl.get(url + 'component.json').body_str)
+      empty_directory '.toolfan'
+      if data.has_key?('scripts')
+        data['scripts'].each do |s|
+          create_file ".toolfan/javascripts/#{s.gsub(/^js/, '')}", Curl.get(url + s).body_str
+        end
+      end
+      if data.has_key?('main')
+        data['main'] = [data['main']] unless data['main'].is_a?(Array)
+        data['main'].each do |s|
+          if s.end_with?('.js')
+            create_file ".toolfan/javascripts/#{File.basename(s)}", Curl.get(url + s).body_str
+          elsif s.end_with?('.css')
+            create_file ".toolfan/stylesheets/#{File.basename(s)}", Curl.get(url + s).body_str
+          else
+            create_file ".toolfan/others/#{File.basename(s)}", Curl.get(url + s).body_str
+          end
+        end
+      end
+    end
+  end
+end
+
+ToolfanCLI.start(ARGV)
